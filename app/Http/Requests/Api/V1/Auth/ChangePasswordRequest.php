@@ -5,7 +5,7 @@ namespace App\Http\Requests\Api\V1\Auth;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
 
-class ResetPasswordRequest extends FormRequest
+class ChangePasswordRequest extends FormRequest
 {
 
     /**
@@ -24,16 +24,12 @@ class ResetPasswordRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email'    => ['required', 'email'],
-            'token'    => ['required', 'string'],
-            'password' => [
+            'current_password' => ['required', 'current_password:api'],
+            'new_password'     => [
                 'required',
                 'confirmed',
-                Password::min(8)
-                    ->mixedCase()
-                    ->numbers()
-                    ->symbols()
-                    ->uncompromised(),
+                'different:current_password',
+                Password::min(8)->mixedCase()->numbers()->symbols()->uncompromised(),
             ],
         ];
     }

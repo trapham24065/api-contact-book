@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Auth\ChangePasswordRequest;
 use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Models\UserApiKey;
 use Carbon\Carbon;
@@ -274,34 +275,37 @@ class AuthController extends Controller
      * - Update user's password.
      * - Mark reset record as used.
      */
-    public function resetPassword(ResetPasswordRequest $request): JsonResponse
+    public function resetPassword(ResetPasswordRequest $request): Response
     {
         $validatedData = $request->validated();
         $email = $validatedData['email'];
         $plainToken = $validatedData['token'];
+        $tokenHash = hash('sha256', $plainToken);
         // Find reset record
-        $resetRecord = PasswordReset::where('email', $email)->first();
+        $resetRecord = PasswordReset::where('email', $email)
+            ->where('token_hash', $tokenHash)
+            ->first();
+        // Token/email mismatch
+        if (!$resetRecord) {
+            $this->logRequest($request, Response::HTTP_NOT_FOUND);
+
+            return response()->json(['message' => 'Invalid reset token or email.'], Response::HTTP_NOT_FOUND);
+        }
 
         // Token invalid or already used
-        if (!$resetRecord || $resetRecord->used_at) {
-            $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
-            return response()->json([
-                'status'  => 'error',
-                'message' => 'Invalid token or email.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        if ($resetRecord->used_at) {
+            $this->logRequest($request, Response::HTTP_GONE);
+
+            return response()->json(['message' => 'This reset token has already been used.'], Response::HTTP_GONE);
         }
 
         // Token expired
         if (Carbon::parse($resetRecord->expires_at)->isPast()) {
-            $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
+            $this->logRequest($request, Response::HTTP_GONE);
             $resetRecord->delete();
-            return response()->json([
-                'status'  => 'error',
-                'message' => 'Token has expired.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+
+            return response()->json(['message' => 'This reset token has expired.'], Response::HTTP_GONE);
         }
-        // Verify token hash
-        $tokenHash = hash('sha256', $plainToken);
 
         if (!hash_equals($resetRecord->token_hash, $tokenHash)) {
             $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
@@ -314,11 +318,8 @@ class AuthController extends Controller
         // Find user
         $user = User::where('email', $email)->first();
         if (!$user) {
-            $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
-            return response()->json([
-                'status'  => 'error',
-                'message' => 'User not found.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            $this->logRequest($request, Response::HTTP_NOT_FOUND);
+            return response()->json(['message' => 'User not found.'], Response::HTTP_NOT_FOUND);
         }
 
         // Update password
@@ -332,10 +333,34 @@ class AuthController extends Controller
         // Log successful reset
         $this->logRequest($request, Response::HTTP_OK, $user->user_id);
 
-        return response()->json([
-            'status'  => 'success',
-            'message' => 'Your password has been reset successfully.',
-        ], Response::HTTP_OK);
+        return response()->noContent();
+    }
+
+    /**
+     * Change the authenticated user's password.
+     *
+     * This method performs the following steps:
+     * - Retrieves the currently authenticated user.
+     * - Hashes and updates the user's password securely.
+     * - Logs the user out to invalidate existing tokens.
+     * - Records the request in the request_logs table.
+     *
+     * @param  ChangePasswordRequest  $request  The validated request containing the new password.
+     *
+     * @return \Illuminate\Http\Response  A no-content response indicating the password change was successful.
+     */
+    public function changePassword(ChangePasswordRequest $request): Response
+    {
+        $user = Auth::user();
+
+        $user->password = Hash::make($request->new_password);
+        $user->save();
+
+        Auth::guard('api')->logout();
+
+        $this->logRequest($request, Response::HTTP_NO_CONTENT, $user->user_id);
+
+        return response()->noContent();
     }
 
 }
