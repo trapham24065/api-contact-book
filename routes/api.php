@@ -24,4 +24,9 @@ Route::prefix('/v1/auth')->group(function () {
 
     Route::post('/reset-password', [AuthController::class, 'resetPassword'])
         ->middleware('throttle:5,60');
+
+    Route::middleware('auth:api')->group(function () {
+        Route::post('/change-password', [AuthController::class, 'changePassword'])
+            ->middleware('throttle:10,60'); // [C07]
+    });
 });
