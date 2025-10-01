@@ -4,7 +4,9 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Models\UserApiKey;
+use Carbon\Carbon;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use App\Http\Requests\Api\V1\Auth\RegisterRequest;
@@ -18,6 +20,10 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use App\Http\Requests\Api\V1\Auth\LoginRequest;
 use Illuminate\Support\Facades\Auth;
+use App\Http\Requests\Api\V1\Auth\ForgotPasswordRequest;
+use App\Models\PasswordReset;
+use App\Mail\PasswordResetMail;
+use Illuminate\Support\Facades\Mail;
 
 /**
  * Class AuthController
@@ -173,15 +179,15 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if ($user->status !== 'active') {
-            $this->logRequest($request, Response::HTTP_FORBIDDEN, $user->user_id);
+        if ($user?->status !== 'active') {
+            $this->logRequest($request, Response::HTTP_FORBIDDEN, $user?->user_id);
             return response()->json([
                 'status'  => 'error',
                 'message' => 'Your account is not active. Please contact support.',
             ], Response::HTTP_FORBIDDEN);
         }
 
-        $this->logRequest($request, Response::HTTP_OK, $user->user_id);
+        $this->logRequest($request, Response::HTTP_OK, $user?->user_id);
 
         return $this->respondWithToken((string)$token, $user);
     }
@@ -189,8 +195,9 @@ class AuthController extends Controller
     /**
      * Build the standardized JWT response payload.
      *
-     * @param  string  $token  JWT access token.
-     * @param  User    $user   Authenticated user instance.
+     * @param  string|null            $token  JWT access token.
+     *
+     * @param  \App\Models\User|null  $user   Authenticated user instance.
      *
      * @return JsonResponse
      *
@@ -200,7 +207,7 @@ class AuthController extends Controller
      * - expires_in (lifetime in seconds)
      * - user profile (id, name, email, role, status)
      */
-    protected function respondWithToken(string $token, User $user): JsonResponse
+    protected function respondWithToken(?string $token, ?User $user): JsonResponse
     {
         return response()->json([
             'status'     => 'success',
@@ -209,13 +216,126 @@ class AuthController extends Controller
             'token_type' => 'bearer',
             'expires_in' => Auth::guard('api')->factory()->getTTL() * 60,
             'user'       => [
-                'user_id' => $user->user_id,
-                'name'    => $user->name,
-                'email'   => $user->email,
-                'role'    => $user->role,
-                'status'  => $user->status,
+                'user_id' => $user?->user_id,
+                'name'    => $user?->name,
+                'email'   => $user?->email,
+                'role'    => $user?->role,
+                'status'  => $user?->status,
             ],
         ]);
+    }
+
+    /**
+     * Handle forgot password flow:
+     * - If email exists → generate token, save hashed token in DB.
+     * - Send reset link via email.
+     * - Always return generic response (avoid leaking info).
+     */
+    public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
+    {
+        $user = User::where('email', $request->email)->first();
+
+        $this->logRequest($request, Response::HTTP_ACCEPTED);
+
+        if ($user) {
+            // Generate secure token
+            $plainToken = Str::random(64);
+            $tokenHash = hash('sha256', $plainToken);
+            // Remove old token (if any)
+            PasswordReset::where('user_id', $user->user_id)->delete();
+
+            PasswordReset::create([
+                'user_id'    => $user->user_id,
+                'email'      => $user->email,
+                'token_hash' => $tokenHash,
+                'expires_at' => now()->addMinutes(20),
+                'request_ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+
+            // Build reset link for frontend
+            $resetLink = config('app.frontend_url').
+                '/reset-password?token='.$plainToken.
+                '&email='.urlencode($user->email);
+            // Send reset email
+            Mail::to($user->email)->send(new PasswordResetMail($user->name, $resetLink));
+        }
+        // Always return accepted response (prevent account enumeration)
+        return response()->json([
+            'status'  => 'accepted',
+            'message' => "If an account with that email exists, we've sent instructions to reset your password.",
+        ], Response::HTTP_ACCEPTED);
+    }
+
+    /**
+     * Reset password flow:
+     * - Verify token validity & expiration.
+     * - Match token hash.
+     * - Update user's password.
+     * - Mark reset record as used.
+     */
+    public function resetPassword(ResetPasswordRequest $request): JsonResponse
+    {
+        $validatedData = $request->validated();
+        $email = $validatedData['email'];
+        $plainToken = $validatedData['token'];
+        // Find reset record
+        $resetRecord = PasswordReset::where('email', $email)->first();
+
+        // Token invalid or already used
+        if (!$resetRecord || $resetRecord->used_at) {
+            $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Invalid token or email.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // Token expired
+        if (Carbon::parse($resetRecord->expires_at)->isPast()) {
+            $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
+            $resetRecord->delete();
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Token has expired.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        // Verify token hash
+        $tokenHash = hash('sha256', $plainToken);
+
+        if (!hash_equals($resetRecord->token_hash, $tokenHash)) {
+            $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Invalid token or email.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // Find user
+        $user = User::where('email', $email)->first();
+        if (!$user) {
+            $this->logRequest($request, Response::HTTP_UNPROCESSABLE_ENTITY);
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'User not found.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // Update password
+        $user->password = Hash::make($validatedData['password']);
+        $user->save();
+
+        // Mark reset token as used
+        $resetRecord->used_at = now();
+        $resetRecord->save();
+
+        // Log successful reset
+        $this->logRequest($request, Response::HTTP_OK, $user->user_id);
+
+        return response()->json([
+            'status'  => 'success',
+            'message' => 'Your password has been reset successfully.',
+        ], Response::HTTP_OK);
     }
 
 }
