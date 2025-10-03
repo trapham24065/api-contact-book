@@ -2,10 +2,19 @@
 
 namespace App\Providers;
 
+use App\Models\Contact;
+use App\Observers\ContactObserver;
+use App\Policies\ContactPolicy;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
+
+    protected $policies
+        = [
+            Contact::class => ContactPolicy::class,
+        ];
+
     /**
      * Register any application services.
      */
@@ -19,6 +28,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        Contact::observe(ContactObserver::class);
     }
+
 }

@@ -32,6 +32,11 @@ class User extends Authenticatable implements JWTSubject
             'daily_quota',
         ];
 
+    protected $casts
+        = [
+            'user_id' => 'integer',
+        ];
+
     /**
      * The attributes that should be hidden for serialization.
      *
@@ -82,6 +87,11 @@ class User extends Authenticatable implements JWTSubject
         return [
             'role' => $this->role,
         ];
+    }
+
+    public function contacts(): User|HasMany
+    {
+        return $this->hasMany(Contact::class, 'user_id', 'user_id');
     }
 
 }
