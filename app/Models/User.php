@@ -94,4 +94,9 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(Contact::class, 'user_id', 'user_id');
     }
 
+    public function dailyUsage()
+    {
+        return $this->hasMany(UserDailyUsage::class, 'user_id', 'user_id');
+    }
+
 }
