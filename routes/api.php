@@ -10,6 +10,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\ContactAttributeController;
 use App\Http\Controllers\Api\V1\ContactController;
 use Illuminate\Support\Facades\Route;
 
@@ -31,5 +32,7 @@ Route::middleware(['auth:api', 'check.status.quota'])->prefix('v1')->group(funct
     Route::apiResource('contacts', ContactController::class)->parameters([
         'contacts' => 'contact',
     ]);
+
+    Route::post('/contacts/{contact}/attributes', [ContactAttributeController::class, 'store']);
 });
 

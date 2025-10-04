@@ -57,7 +57,7 @@ class ContactController extends Controller
      */
     public function show(Contact $contact): ContactResource
     {
-        return new ContactResource($contact);
+        return new ContactResource($contact->load('attributes'));
     }
 
     /**
