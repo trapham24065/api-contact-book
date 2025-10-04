@@ -12,6 +12,7 @@ declare(strict_types=1);
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ContactAttributeController;
 use App\Http\Controllers\Api\V1\ContactController;
+use App\Http\Controllers\Api\V1\UserController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/auth')->group(function () {
@@ -20,17 +21,17 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,60');
     Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:5,60');
 });
-Route::middleware('auth:api')->prefix('v1')->group(function () {
-    Route::get('/me', function () {
-        return response()->json(Auth::user());
-    });
-});
+
 Route::middleware(['auth:api', 'check.status.quota'])->prefix('v1')->group(function () {
     Route::post('/auth/change-password', [AuthController::class, 'changePassword'])
         ->middleware('throttle:10,60');
 
     Route::apiResource('contacts', ContactController::class)->parameters([
         'contacts' => 'contact',
+    ]);
+
+    Route::apiResource('users', UserController::class)->parameters([
+        'users' => 'user',
     ]);
 
     Route::post('/contacts/{contact}/attributes', [ContactAttributeController::class, 'store']);

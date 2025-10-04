@@ -3,8 +3,11 @@
 namespace App\Providers;
 
 use App\Models\Contact;
+use App\Models\User;
 use App\Observers\ContactObserver;
+use App\Observers\UserObserver;
 use App\Policies\ContactPolicy;
+use App\Policies\UserPolicy;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -13,6 +16,7 @@ class AppServiceProvider extends ServiceProvider
     protected $policies
         = [
             Contact::class => ContactPolicy::class,
+            User::class    => UserPolicy::class,
         ];
 
     /**
@@ -29,6 +33,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Contact::observe(ContactObserver::class);
+        User::observe(UserObserver::class);
     }
 
 }
